@@ -17,4 +17,7 @@ Thumbs.db
 # Local config / env
 .env
 .env.local
-/.claude/
+# Ignore local Claude state (settings, sessions, history) but keep the
+# shared skills committed.
+/.claude/*
+!/.claude/skills/
