@@ -1,0 +1,111 @@
+use crate::settings::{MAX_REFRESH_MS, MIN_REFRESH_MS, REFRESH_PRESETS, Settings};
+use crate::theme;
+use crate::ui::widgets;
+
+#[derive(Default)]
+pub struct State {}
+
+pub fn show(ui: &mut egui::Ui, _state: &mut State, settings: &Settings) {
+    ui.heading("Settings");
+    ui.label(
+        egui::RichText::new("Tweak how rproc samples and displays system data.")
+            .color(theme::TEXT_DIM),
+    );
+    ui.add_space(16.0);
+
+    widgets::card(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.label(egui::RichText::new("Refresh rate").strong().size(15.0));
+                ui.label(
+                    egui::RichText::new(
+                        "How often the sampler thread polls the system. \
+                         Lower intervals feel snappier but use more CPU.",
+                    )
+                    .color(theme::TEXT_DIM)
+                    .small(),
+                );
+            });
+        });
+        ui.add_space(10.0);
+
+        let mut current = settings.refresh_ms();
+
+        // Preset chips
+        ui.horizontal_wrapped(|ui| {
+            for (ms, label) in REFRESH_PRESETS {
+                let selected = current == *ms;
+                if preset_chip(ui, label, selected).clicked() {
+                    settings.set_refresh_ms(*ms);
+                    current = *ms;
+                }
+            }
+        });
+
+        ui.add_space(12.0);
+
+        // Fine slider for arbitrary values.
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Custom")
+                    .color(theme::TEXT_DIM)
+                    .small(),
+            );
+            let mut value = current;
+            let resp = ui.add(
+                egui::Slider::new(&mut value, MIN_REFRESH_MS..=MAX_REFRESH_MS)
+                    .logarithmic(true)
+                    .suffix(" ms"),
+            );
+            if resp.changed() {
+                settings.set_refresh_ms(value);
+                current = value;
+            }
+        });
+
+        ui.add_space(6.0);
+        ui.label(
+            egui::RichText::new(format!("Currently sampling every {}", format_ms(current)))
+                .color(theme::ACCENT)
+                .strong(),
+        );
+    });
+
+    ui.add_space(12.0);
+
+    widgets::card(ui, |ui| {
+        ui.label(egui::RichText::new("About").strong().size(15.0));
+        ui.add_space(4.0);
+        widgets::stat(ui, "Version", env!("CARGO_PKG_VERSION"));
+        widgets::stat(
+            ui,
+            "Build",
+            if cfg!(debug_assertions) { "debug" } else { "release" },
+        );
+    });
+}
+
+fn preset_chip(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
+    let bg = if selected {
+        egui::Color32::from_rgba_unmultiplied(0x60, 0xCD, 0xFF, 50)
+    } else {
+        theme::PANEL_BG
+    };
+    let fg = if selected { theme::ACCENT } else { theme::TEXT };
+    ui.add(
+        egui::Button::new(egui::RichText::new(label).color(fg).strong())
+            .fill(bg)
+            .corner_radius(egui::CornerRadius::same(6))
+            .min_size(egui::vec2(80.0, 28.0)),
+    )
+}
+
+fn format_ms(ms: u64) -> String {
+    if ms < 1000 {
+        format!("{ms} ms")
+    } else if ms % 1000 == 0 {
+        format!("{} s", ms / 1000)
+    } else {
+        format!("{:.1} s", ms as f64 / 1000.0)
+    }
+}

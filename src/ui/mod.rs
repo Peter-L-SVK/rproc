@@ -1,0 +1,7 @@
+pub mod performance;
+pub mod processes;
+pub mod services;
+pub mod settings;
+pub mod sidebar;
+pub mod startup;
+pub mod widgets;

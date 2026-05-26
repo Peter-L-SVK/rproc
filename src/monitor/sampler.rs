@@ -1,0 +1,220 @@
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use sysinfo::{Disks, MemoryRefreshKind, Networks, ProcessRefreshKind, ProcessesToUpdate, System, Users};
+
+use super::{gpu, processes, system};
+use crate::settings::{MAX_REFRESH_MS, MIN_REFRESH_MS};
+
+const HISTORY_LEN: usize = 60;
+
+#[derive(Clone, Default)]
+pub struct Snapshot {
+    pub ready: bool,
+    /// Sampling period (ms) used when collecting the most recent samples.
+    /// Consumed by plot widgets to render the X-axis time labels — without
+    /// this the labels would always read "-Xs" assuming a 1 s tick, which
+    /// is wrong when the user picks a faster/slower refresh rate.
+    pub sample_interval_ms: u64,
+    pub system: system::SystemSummary,
+    pub history: History,
+    pub processes: Vec<processes::ProcInfo>,
+    pub gpus: Vec<gpu::GpuInfo>,
+}
+
+#[derive(Clone, Default)]
+pub struct History {
+    pub cpu_total: VecDeque<f32>,
+    pub per_core_cpu: Vec<VecDeque<f32>>,
+    pub ram_used_pct: VecDeque<f32>,
+    /// Per-interface throughput history, keyed by interface name
+    /// (e.g. `wlp4s0`, `enp0s31f6`).
+    pub net_rx_bps: HashMap<String, VecDeque<f64>>,
+    pub net_tx_bps: HashMap<String, VecDeque<f64>>,
+    /// Per-physical-disk history, keyed by device path (e.g. `/dev/nvme0n1`).
+    pub disk_read_bps: HashMap<String, VecDeque<f64>>,
+    pub disk_write_bps: HashMap<String, VecDeque<f64>>,
+    pub gpu_util: Vec<VecDeque<f32>>,
+    pub gpu_mem_pct: Vec<VecDeque<f32>>,
+}
+
+pub struct Sampler {
+    inner: Arc<Mutex<Snapshot>>,
+}
+
+impl Sampler {
+    pub fn start(refresh_ms: Arc<AtomicU64>) -> Self {
+        let inner = Arc::new(Mutex::new(Snapshot::default()));
+        let inner_t = inner.clone();
+        thread::Builder::new()
+            .name("rproc-sampler".into())
+            .spawn(move || sampler_loop(inner_t, refresh_ms))
+            .expect("spawn sampler");
+        Self { inner }
+    }
+
+    pub fn snapshot(&self) -> Snapshot {
+        self.inner.lock().unwrap().clone()
+    }
+}
+
+fn sampler_loop(out: Arc<Mutex<Snapshot>>, refresh_ms: Arc<AtomicU64>) {
+    let mut sys = System::new_all();
+    let mut nets = Networks::new_with_refreshed_list();
+    let mut disks = Disks::new_with_refreshed_list();
+    let mut users = Users::new_with_refreshed_list();
+    let gpu_collector = gpu::GpuCollector::init();
+
+    {
+        let mut snap = out.lock().unwrap();
+        snap.history.per_core_cpu = (0..sys.cpus().len())
+            .map(|_| VecDeque::with_capacity(HISTORY_LEN))
+            .collect();
+    }
+
+    // sysinfo CPU usage requires two refreshes spaced apart to compute deltas.
+    sys.refresh_cpu_usage();
+    thread::sleep(Duration::from_millis(250));
+
+    // Track the wall-clock interval between consecutive sysinfo refreshes.
+    // We pass this to `SystemSummary::collect` so byte counters get normalized
+    // into bytes/sec regardless of the configured sampling rate.
+    let mut last_refresh = Instant::now();
+
+    loop {
+        let now = Instant::now();
+        let delta_secs = now.duration_since(last_refresh).as_secs_f64();
+        last_refresh = now;
+
+        sys.refresh_cpu_usage();
+        sys.refresh_memory_specifics(MemoryRefreshKind::everything());
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing()
+                .with_cpu()
+                .with_memory()
+                .with_disk_usage()
+                .with_user(sysinfo::UpdateKind::OnlyIfNotSet)
+                .with_cmd(sysinfo::UpdateKind::OnlyIfNotSet)
+                .with_exe(sysinfo::UpdateKind::OnlyIfNotSet),
+        );
+        nets.refresh(true);
+        disks.refresh(true);
+        users.refresh();
+
+        let summary = system::SystemSummary::collect(&sys, &nets, &disks, delta_secs);
+        let procs = processes::collect(&sys, &users);
+        let gpus = gpu_collector.sample();
+
+        {
+            let mut snap = out.lock().unwrap();
+            push_capped(&mut snap.history.cpu_total, summary.cpu_total, HISTORY_LEN);
+            if snap.history.per_core_cpu.len() != summary.per_core.len() {
+                snap.history.per_core_cpu = (0..summary.per_core.len())
+                    .map(|_| VecDeque::with_capacity(HISTORY_LEN))
+                    .collect();
+            }
+            for (i, c) in summary.per_core.iter().enumerate() {
+                if let Some(q) = snap.history.per_core_cpu.get_mut(i) {
+                    push_capped(q, *c, HISTORY_LEN);
+                }
+            }
+            push_capped(
+                &mut snap.history.ram_used_pct,
+                summary.ram_used_pct,
+                HISTORY_LEN,
+            );
+            let mut net_present: HashSet<String> = HashSet::with_capacity(summary.nets.len());
+            for n in &summary.nets {
+                net_present.insert(n.name.clone());
+                let r = snap
+                    .history
+                    .net_rx_bps
+                    .entry(n.name.clone())
+                    .or_insert_with(|| VecDeque::with_capacity(HISTORY_LEN));
+                push_capped(r, n.rx_bps, HISTORY_LEN);
+                let w = snap
+                    .history
+                    .net_tx_bps
+                    .entry(n.name.clone())
+                    .or_insert_with(|| VecDeque::with_capacity(HISTORY_LEN));
+                push_capped(w, n.tx_bps, HISTORY_LEN);
+            }
+            snap.history.net_rx_bps.retain(|k, _| net_present.contains(k));
+            snap.history.net_tx_bps.retain(|k, _| net_present.contains(k));
+
+            let mut present: HashSet<String> = HashSet::with_capacity(summary.disks.len());
+            for d in &summary.disks {
+                present.insert(d.name.clone());
+                let r = snap
+                    .history
+                    .disk_read_bps
+                    .entry(d.name.clone())
+                    .or_insert_with(|| VecDeque::with_capacity(HISTORY_LEN));
+                push_capped(r, d.read_bps, HISTORY_LEN);
+                let w = snap
+                    .history
+                    .disk_write_bps
+                    .entry(d.name.clone())
+                    .or_insert_with(|| VecDeque::with_capacity(HISTORY_LEN));
+                push_capped(w, d.write_bps, HISTORY_LEN);
+            }
+            snap.history.disk_read_bps.retain(|k, _| present.contains(k));
+            snap.history.disk_write_bps.retain(|k, _| present.contains(k));
+
+            if snap.history.gpu_util.len() != gpus.len() {
+                snap.history.gpu_util = (0..gpus.len())
+                    .map(|_| VecDeque::with_capacity(HISTORY_LEN))
+                    .collect();
+                snap.history.gpu_mem_pct = (0..gpus.len())
+                    .map(|_| VecDeque::with_capacity(HISTORY_LEN))
+                    .collect();
+            }
+            for (i, g) in gpus.iter().enumerate() {
+                if let Some(q) = snap.history.gpu_util.get_mut(i) {
+                    push_capped(q, g.util_pct, HISTORY_LEN);
+                }
+                let mem_pct = if g.mem_total > 0 {
+                    (g.mem_used as f32 / g.mem_total as f32) * 100.0
+                } else {
+                    0.0
+                };
+                if let Some(q) = snap.history.gpu_mem_pct.get_mut(i) {
+                    push_capped(q, mem_pct, HISTORY_LEN);
+                }
+            }
+
+            snap.system = summary;
+            snap.processes = procs;
+            snap.gpus = gpus;
+            snap.ready = true;
+            // Surface the *current* sampling period so plot widgets can label
+            // their X axis correctly. Read before the sleep so it reflects the
+            // interval just used to space these samples.
+            snap.sample_interval_ms = refresh_ms
+                .load(Ordering::Relaxed)
+                .clamp(MIN_REFRESH_MS, MAX_REFRESH_MS);
+        }
+
+        let elapsed = now.elapsed();
+        let target = Duration::from_millis(
+            refresh_ms
+                .load(Ordering::Relaxed)
+                .clamp(MIN_REFRESH_MS, MAX_REFRESH_MS),
+        );
+        if elapsed < target {
+            thread::sleep(target - elapsed);
+        }
+    }
+}
+
+fn push_capped<T>(q: &mut VecDeque<T>, v: T, cap: usize) {
+    if q.len() == cap {
+        q.pop_front();
+    }
+    q.push_back(v);
+}
