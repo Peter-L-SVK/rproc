@@ -78,106 +78,72 @@ pub fn show(ui: &mut egui::Ui, state: &mut State) {
     let mut actions: Vec<(usize, &'static str)> = Vec::new();
     let mut open_properties: Option<(String, ServiceScope)> = None;
 
-    egui::Frame::new()
-        .fill(theme::PANEL_BG)
-        .corner_radius(egui::CornerRadius::same(8))
-        .inner_margin(egui::Margin::same(8))
-        .show(ui, |ui| {
-            TableBuilder::new(ui)
-                .striped(true)
-                .resizable(true)
-                .sense(egui::Sense::click())
-                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                .column(Column::initial(290.0).at_least(180.0).clip(true))
-                .column(Column::initial(70.0).at_least(60.0))
-                .column(Column::initial(80.0).at_least(70.0))
-                .column(Column::initial(80.0).at_least(70.0))
-                .column(Column::remainder().at_least(200.0).clip(true))
-                .column(Column::initial(230.0))
-                .header(26.0, |mut h| {
-                    h.col(|ui| {
-                        ui.strong("Unit");
-                    });
-                    h.col(|ui| {
-                        ui.strong("Scope");
-                    });
-                    h.col(|ui| {
-                        ui.strong("Active");
-                    });
-                    h.col(|ui| {
-                        ui.strong("Sub");
-                    });
-                    h.col(|ui| {
-                        ui.strong("Description");
-                    });
-                    h.col(|ui| {
-                        ui.strong("Actions");
-                    });
-                })
-                .body(|body| {
-                    body.rows(24.0, rows.len(), |mut row| {
-                        let idx = rows[row.index()];
-                        let s = &state.entries[idx];
-                        row.col(|ui| {
-                            ui.add(egui::Label::new(&s.name).truncate());
-                        });
-                        row.col(|ui| {
-                            ui.label(scope_str(&s.scope));
-                        });
-                        row.col(|ui| {
-                            ui.label(egui::RichText::new(&s.active).color(active_color(&s.active)));
-                        });
-                        row.col(|ui| {
-                            ui.label(&s.sub);
-                        });
-                        row.col(|ui| {
-                            ui.add(egui::Label::new(&s.description).truncate());
-                        });
-                        row.col(|ui| {
-                            ui.horizontal(|ui| {
-                                if ui.small_button("Start").clicked() {
-                                    actions.push((idx, "start"));
-                                }
-                                if ui.small_button("Stop").clicked() {
-                                    actions.push((idx, "stop"));
-                                }
-                                if ui.small_button("Restart").clicked() {
-                                    actions.push((idx, "restart"));
+    // Replace the egui::Frame::new()... block with this:
+egui::Frame::new()
+    .fill(theme::PANEL_BG)
+    .corner_radius(egui::CornerRadius::same(8))
+    .inner_margin(egui::Margin::same(8))
+    .show(ui, |ui| {
+        // Constrain the table height so the bottom label stays visible
+        egui::ScrollArea::vertical()
+            .max_height(ui.available_height() - 30.0) // leave room for status
+            .show(ui, |ui| {
+                TableBuilder::new(ui)
+                    .striped(true)
+                    .resizable(true)
+                    .sense(egui::Sense::click())
+                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                    .column(Column::initial(290.0).at_least(180.0).clip(true))
+                    .column(Column::initial(70.0).at_least(60.0))
+                    .column(Column::initial(80.0).at_least(70.0))
+                    .column(Column::initial(80.0).at_least(70.0))
+                    .column(Column::remainder().at_least(200.0).clip(true))
+                    .column(Column::initial(230.0))
+                    .header(26.0, |mut h| {
+                        h.col(|ui| { ui.strong("Unit"); });
+                        h.col(|ui| { ui.strong("Scope"); });
+                        h.col(|ui| { ui.strong("Active"); });
+                        h.col(|ui| { ui.strong("Sub"); });
+                        h.col(|ui| { ui.strong("Description"); });
+                        h.col(|ui| { ui.strong("Actions"); });
+                    })
+                    .body(|body| {
+                        body.rows(24.0, rows.len(), |mut row| {
+                            let idx = rows[row.index()];
+                            let s = &state.entries[idx];
+                            row.col(|ui| { ui.add(egui::Label::new(&s.name).truncate()); });
+                            row.col(|ui| { ui.label(scope_str(&s.scope)); });
+                            row.col(|ui| { ui.label(egui::RichText::new(&s.active).color(active_color(&s.active))); });
+                            row.col(|ui| { ui.label(&s.sub); });
+                            row.col(|ui| { ui.add(egui::Label::new(&s.description).truncate()); });
+                            row.col(|ui| {
+                                ui.horizontal(|ui| {
+                                    if ui.small_button("Start").clicked() { actions.push((idx, "start")); }
+                                    if ui.small_button("Stop").clicked() { actions.push((idx, "stop")); }
+                                    if ui.small_button("Restart").clicked() { actions.push((idx, "restart")); }
+                                });
+                            });
+                            let resp = row.response();
+                            if resp.double_clicked() {
+                                open_properties = Some((s.name.clone(), s.scope.clone()));
+                            }
+                            resp.context_menu(|ui| {
+                                ui.set_min_width(180.0);
+                                if ui.button("Start").clicked() { actions.push((idx, "start")); ui.close(); }
+                                if ui.button("Stop").clicked() { actions.push((idx, "stop")); ui.close(); }
+                                if ui.button("Restart").clicked() { actions.push((idx, "restart")); ui.close(); }
+                                ui.separator();
+                                if ui.button("Copy unit name").clicked() { ui.ctx().copy_text(s.name.clone()); ui.close(); }
+                                ui.separator();
+                                if ui.button("Properties").clicked() {
+                                    open_properties = Some((s.name.clone(), s.scope.clone()));
+                                    ui.close();
                                 }
                             });
                         });
-                        let resp = row.response();
-                        if resp.double_clicked() {
-                            open_properties = Some((s.name.clone(), s.scope.clone()));
-                        }
-                        resp.context_menu(|ui| {
-                            ui.set_min_width(180.0);
-                            if ui.button("Start").clicked() {
-                                actions.push((idx, "start"));
-                                ui.close();
-                            }
-                            if ui.button("Stop").clicked() {
-                                actions.push((idx, "stop"));
-                                ui.close();
-                            }
-                            if ui.button("Restart").clicked() {
-                                actions.push((idx, "restart"));
-                                ui.close();
-                            }
-                            ui.separator();
-                            if ui.button("Copy unit name").clicked() {
-                                ui.ctx().copy_text(s.name.clone());
-                                ui.close();
-                            }
-                            ui.separator();
-                            if ui.button("Properties").clicked() {
-                                open_properties = Some((s.name.clone(), s.scope.clone()));
-                                ui.close();
-                            }
-                        });
                     });
-                });
-        });
+            });
+    });
 
     if let Some((name, scope)) = open_properties {
         // Only refetch when the user opens a different unit — re-clicking the
