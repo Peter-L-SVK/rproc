@@ -31,77 +31,83 @@ impl Resolver {
     }
 
     pub fn icon_uri(&mut self, proc_name: &str, exe_path: &str) -> Option<String> {
-	// Standard candidates
-	for cand in desktop_candidates(proc_name, exe_path) {
-            if cand.is_empty() { continue; }
-            if let Some(icon) = self.index().get(&cand).cloned()
-		&& let Some(uri) = self.resolve_icon(&icon)
-            {
-		return Some(uri);
+        // Standard candidates
+        for cand in desktop_candidates(proc_name, exe_path) {
+            if cand.is_empty() {
+                continue;
             }
-	}
-	// Prefix match: "brave-browser-s" should match key "brave-browser-stable"
-	let proc_lower = proc_name.to_lowercase();
-	let matching_icon: Option<String> = self.index().iter()
+            if let Some(icon) = self.index().get(&cand).cloned()
+                && let Some(uri) = self.resolve_icon(&icon)
+            {
+                return Some(uri);
+            }
+        }
+        // Prefix match: "brave-browser-s" should match key "brave-browser-stable"
+        let proc_lower = proc_name.to_lowercase();
+        let matching_icon: Option<String> = self
+            .index()
+            .iter()
             .find(|(key, _)| key.starts_with(&proc_lower) || proc_lower.starts_with(key.as_str()))
             .map(|(_, icon)| icon.clone());
-	
-	if let Some(icon) = matching_icon
+
+        if let Some(icon) = matching_icon
             && let Some(uri) = self.resolve_icon(&icon)
-	{
+        {
             return Some(uri);
-	}
-	// Direct icon name lookup
-	if let Some(uri) = self.resolve_icon(&proc_lower) {
+        }
+        // Direct icon name lookup
+        if let Some(uri) = self.resolve_icon(&proc_lower) {
             return Some(uri);
-	}
-	// Generic fallback
-	if let Some(uri) = self.resolve_icon("application-x-executable") {
+        }
+        // Generic fallback
+        if let Some(uri) = self.resolve_icon("application-x-executable") {
             return Some(uri);
-	}
-	None
+        }
+        None
     }
-    
+
     pub fn has_desktop_entry(&self, proc_name: &str, exe_path: &str) -> bool {
         desktop_candidates(proc_name, exe_path)
             .iter()
             .any(|c| !c.is_empty() && self.index().contains_key(c))
     }
-    
+
     fn resolve_icon(&mut self, icon_name: &str) -> Option<String> {
-	if let Some(cached) = self.cache.get(icon_name) {
+        if let Some(cached) = self.cache.get(icon_name) {
             return cached.clone();
-	}
-	let result = if icon_name.starts_with('/') {
+        }
+        let result = if icon_name.starts_with('/') {
             let p = PathBuf::from(icon_name);
             if p.exists() {
-		Some(format!("file://{}", p.display()))
+                Some(format!("file://{}", p.display()))
             } else {
-		None
+                None
             }
-	} else {
-            lookup_icon(icon_name).map(|p| {
-		if p.exists() {
-                    format!("file://{}", p.display())
-		} else {
-                    // This shouldn't happen — lookup_icon already checks exists()
-                    // but just in case, return empty string to skip loading
-                    String::new()
-		}
-            }).filter(|s| !s.is_empty())
-	};
-	self.cache.insert(icon_name.to_string(), result.clone());
-	result
+        } else {
+            lookup_icon(icon_name)
+                .map(|p| {
+                    if p.exists() {
+                        format!("file://{}", p.display())
+                    } else {
+                        // This shouldn't happen — lookup_icon already checks exists()
+                        // but just in case, return empty string to skip loading
+                        String::new()
+                    }
+                })
+                .filter(|s| !s.is_empty())
+        };
+        self.cache.insert(icon_name.to_string(), result.clone());
+        result
     }
 }
 
 fn lookup_icon(icon_name: &str) -> Option<PathBuf> {
     use std::sync::OnceLock;
     static THEME_CHAIN: OnceLock<Vec<PathBuf>> = OnceLock::new();
-    
+
     let theme_dirs = THEME_CHAIN.get_or_init(|| {
         let mut dirs = Vec::new();
-	
+
         let active_theme = std::process::Command::new("gsettings")
             .args(["get", "org.gnome.desktop.interface", "icon-theme"])
             .output()
@@ -114,7 +120,7 @@ fn lookup_icon(icon_name: &str) -> Option<PathBuf> {
                 if s.is_empty() { None } else { Some(s) }
             })
             .unwrap_or_else(|| "hicolor".to_string());
-        
+
         let icon_bases = {
             let mut bases = vec![
                 PathBuf::from("/usr/share/icons"),
@@ -127,12 +133,12 @@ fn lookup_icon(icon_name: &str) -> Option<PathBuf> {
             }
             bases
         };
-        
+
         // Collect themes following inheritance chain
         let mut themes = vec![active_theme];
         let mut seen = std::collections::HashSet::new();
         seen.insert(themes[0].clone());
-        
+
         let mut i = 0;
         while i < themes.len() {
             let current = themes[i].clone(); // Clone to release borrow
@@ -153,11 +159,11 @@ fn lookup_icon(icon_name: &str) -> Option<PathBuf> {
             }
             i += 1;
         }
-	 if seen.insert("hicolor".to_string()) {
+        if seen.insert("hicolor".to_string()) {
             themes.push("hicolor".to_string());
         }
         // Adwaita is GNOME's default and has many generic icons
-         if seen.insert("Adwaita".to_string()) {
+        if seen.insert("Adwaita".to_string()) {
             themes.push("Adwaita".to_string());
         }
         // Build search directories
@@ -166,19 +172,29 @@ fn lookup_icon(icon_name: &str) -> Option<PathBuf> {
                 dirs.push(base.join(theme));
             }
         }
-        
+
         dirs
     });
-    
+
     let names_to_try: [&str; 2] = [
         icon_name,
         icon_name.strip_suffix("-symbolic").unwrap_or(icon_name),
     ];
-    
+
     let exts = ["svg", "png", "xpm"];
-    let sizes = ["48x48", "64x64", "128x128", "32x32", "24x24", "22x22", "16x16", "scalable"];
-    let cats = ["apps", "devices", "places", "categories", "status", "emblems", "mimetypes"];
-    
+    let sizes = [
+        "48x48", "64x64", "128x128", "32x32", "24x24", "22x22", "16x16", "scalable",
+    ];
+    let cats = [
+        "apps",
+        "devices",
+        "places",
+        "categories",
+        "status",
+        "emblems",
+        "mimetypes",
+    ];
+
     for name in &names_to_try {
         for dir in theme_dirs {
             for size in &sizes {

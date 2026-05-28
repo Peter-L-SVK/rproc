@@ -511,7 +511,7 @@ fn render_group_header(
         };
         draw_caret(ui.painter(), rect, theme::TEXT, dir);
         let arrow_resp = arrow_resp.on_hover_cursor(egui::CursorIcon::PointingHand);
-	draw_icon(ui, icon_uri.as_deref());
+        draw_icon(ui, icon_uri.as_deref());
         ui.add(
             egui::Label::new(
                 egui::RichText::new(format!("{}  ({})", g.name, g.procs.len())).strong(),
@@ -549,7 +549,7 @@ fn render_proc_row(
         if indent {
             ui.add_space(20.0);
         }
-	draw_icon(ui, icon_uri.as_deref());
+        draw_icon(ui, icon_uri.as_deref());
         let resp = ui.add(egui::Label::new(&p.name).truncate().selectable(false));
         resp.on_hover_text(if p.cmd.is_empty() { &p.exe } else { &p.cmd });
     });
@@ -997,16 +997,12 @@ fn draw_icon(ui: &mut egui::Ui, uri: Option<&str>) {
         ui.add(
             egui::Image::new(uri)
                 .fit_to_exact_size(egui::Vec2::splat(16.0))
-                .maintain_aspect_ratio(true)
+                .maintain_aspect_ratio(true),
         );
     } else {
-        ui.add(
-            egui::Label::new(
-                egui::RichText::new("⚙")
-                    .color(theme::TEXT_DIM)
-                    .size(14.0)
-            )
-        );
+        ui.add(egui::Label::new(
+            egui::RichText::new("⚙").color(theme::TEXT_DIM).size(14.0),
+        ));
     }
 }
 
