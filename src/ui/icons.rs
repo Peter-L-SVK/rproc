@@ -172,6 +172,12 @@ fn lookup_icon(icon_name: &str) -> Option<PathBuf> {
                 dirs.push(base.join(theme));
             }
         }
+        // Breeze / breeze-dark — KDE defaults (use whichever exists)
+        for breeze in ["breeze", "breeze-dark"] {
+            if seen.insert(breeze.to_string()) {
+                themes.push(breeze.to_string());
+            }
+        }
 
         dirs
     });
