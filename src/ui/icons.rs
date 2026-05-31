@@ -241,6 +241,16 @@ fn build_index() -> HashMap<String, String> {
     map
 }
 
+/// Whether a `.desktop` index `key` and a lowercased process name share a prefix
+/// long enough to be a confident match. The guard is on the *shared prefix*
+/// (whichever string is the prefix of the other), not on `key.len()` alone, so a
+/// short command name like "git" can't claim the icon of any longer "git*" app.
+fn prefix_matches(key: &str, proc_lower: &str) -> bool {
+    const MIN_PREFIX_LEN: usize = 5;
+    (key.starts_with(proc_lower) && proc_lower.len() >= MIN_PREFIX_LEN)
+        || (proc_lower.starts_with(key) && key.len() >= MIN_PREFIX_LEN)
+}
+
 fn has_entry(index_keys: &HashSet<String>, proc_name: &str, exe_path: &str) -> bool {
     desktop_candidates(proc_name, exe_path)
         .iter()
@@ -264,19 +274,23 @@ fn compute_icon_uri(
             return Some(uri);
         }
     }
-    // Prefix match: "brave-browser-s" should match key "brave-browser-stable".
-    // HashMap iteration order is arbitrary, so when several keys match we pick
-    // the longest key (most specific) and break ties lexicographically to stay
-    // deterministic across runs. Very short keys are ignored to avoid a process
-    // name accidentally matching a 1-2 char key that happens to be a prefix.
-    const MIN_PREFIX_LEN: usize = 3;
+    // Prefix match, in two directions:
+    //   - key.starts_with(proc): recovers a truncated process name —
+    //     Linux caps `comm` at 15 chars, so "brave-browser-stable" arrives as
+    //     "brave-browser-s" and must still match its key.
+    //   - proc.starts_with(key): a longer process name carrying a suffix still
+    //     matches the shorter app key (e.g. "signal-desktop" → "signal").
+    // The guard must apply to the *shared prefix* length, which is whichever of
+    // the two strings is the prefix — gating on `key.len()` alone let a 3-char
+    // command like "git" match the icon of any longer "git*" app. Requiring the
+    // shared prefix to be reasonably long rejects "git"/"ssh"/"vim"/"code"/"node"
+    // while keeping "brave"/"signal"/"telegram". HashMap iteration order is
+    // arbitrary, so when several keys match we pick the longest key (most
+    // specific) and break ties lexicographically to stay deterministic.
     let proc_lower = proc_name.to_lowercase();
     let matching_icon: Option<String> = index
         .iter()
-        .filter(|(key, _)| {
-            key.len() >= MIN_PREFIX_LEN
-                && (key.starts_with(&proc_lower) || proc_lower.starts_with(key.as_str()))
-        })
+        .filter(|(key, _)| prefix_matches(key, &proc_lower))
         .max_by(|(a, _), (b, _)| a.len().cmp(&b.len()).then_with(|| b.cmp(a)))
         .map(|(_, icon)| icon.clone());
 
@@ -706,6 +720,30 @@ mod tests {
         let keys: HashSet<String> = ["code".to_string()].into_iter().collect();
         // "code-insiders" has no direct entry, but its stem "code" does.
         assert!(has_entry(&keys, "code-insiders", ""));
+    }
+
+    #[test]
+    fn prefix_matches_recovers_truncated_and_suffixed_names() {
+        // comm truncates at 15 chars: "brave-browser-stable" arrives truncated
+        // and must still match its full key.
+        assert!(prefix_matches("brave-browser-stable", "brave-browser-s"));
+        // Longer process name carrying a suffix matches the shorter app key.
+        assert!(prefix_matches("signal", "signal-desktop"));
+        // Exact app names of decent length still match longer keys.
+        assert!(prefix_matches("telegram-desktop", "telegram"));
+        assert!(prefix_matches("brave-browser", "brave"));
+    }
+
+    #[test]
+    fn prefix_matches_rejects_short_command_names() {
+        // The bug: a 3-char command grabbing the icon of any longer "git*" app.
+        assert!(!prefix_matches("github-desktop", "git"));
+        assert!(!prefix_matches("gitg", "git"));
+        assert!(!prefix_matches("ssh-agent", "ssh"));
+        assert!(!prefix_matches("codium", "code"));
+        assert!(!prefix_matches("node-red", "node"));
+        // Short key on the other side is rejected too.
+        assert!(!prefix_matches("vim", "vim-gtk3"));
     }
 
     #[test]
