@@ -182,9 +182,10 @@ fn disk_temperature(name: &str) -> f32 {
 fn current_cpu_freq() -> u64 {
     if let Ok(freq) =
         std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq")
-        && let Ok(khz) = freq.trim().parse::<u64>(){
+        && let Ok(khz) = freq.trim().parse::<u64>()
+    {
             return khz / 1000;
-	}
+    }
     0
 }
 
