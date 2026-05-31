@@ -9,7 +9,7 @@ use sysinfo::{
     Users,
 };
 
-use super::{gpu, processes, system};
+use super::{attribution, gpu, gpu_attribution, processes, system};
 use crate::settings::{MAX_REFRESH_MS, MIN_REFRESH_MS};
 
 const HISTORY_LEN: usize = 60;
@@ -42,6 +42,10 @@ pub struct History {
     pub disk_write_bps: HashMap<String, VecDeque<f64>>,
     pub gpu_util: Vec<VecDeque<f32>>,
     pub gpu_mem_pct: Vec<VecDeque<f32>>,
+    /// Optional per-sample top-N process attribution, aligned with the other
+    /// series (newest on the right). Empty unless the attribution feature is
+    /// enabled; never persisted to disk. See [`super::attribution`].
+    pub attribution: VecDeque<super::attribution::Attribution>,
 }
 
 pub struct Sampler {
@@ -59,7 +63,11 @@ pub struct Sampler {
 }
 
 impl Sampler {
-    pub fn start(refresh_ms: Arc<AtomicU64>, ctx: egui::Context) -> Self {
+    pub fn start(
+        refresh_ms: Arc<AtomicU64>,
+        attribution_enabled: Arc<AtomicBool>,
+        ctx: egui::Context,
+    ) -> Self {
         // Default off: the app opens on Performance, so the process table stays
         // empty until the user first visits the Processes tab.
         let processes_active = Arc::new(AtomicBool::new(false));
@@ -81,7 +89,7 @@ impl Sampler {
         let active_t = processes_active.clone();
         thread::Builder::new()
             .name("rproc-sampler".into())
-            .spawn(move || sampler_loop(inner_t, refresh_ms, active_t, ctx))
+            .spawn(move || sampler_loop(inner_t, refresh_ms, active_t, attribution_enabled, ctx))
             .expect("spawn sampler");
         Self {
             inner,
@@ -105,6 +113,7 @@ fn sampler_loop(
     out: Arc<Mutex<Arc<Snapshot>>>,
     refresh_ms: Arc<AtomicU64>,
     processes_active: Arc<AtomicBool>,
+    attribution_enabled: Arc<AtomicBool>,
     ctx: egui::Context,
 ) {
     // `System::new()` + a CPU refresh avoids `new_all()`'s upfront scan of
@@ -119,6 +128,7 @@ fn sampler_loop(
     let mut components = Components::new_with_refreshed_list();
     let mut users = Users::new_with_refreshed_list();
     let mut gpu_collector = gpu::GpuCollector::init();
+    let mut gpu_attr = gpu_attribution::GpuAttribution::init();
 
     // Start from whatever's been published (the prefill from disk) so we
     // don't drop the history we just loaded. After this point the working
@@ -149,22 +159,37 @@ fn sampler_loop(
         // Skipping it leaves sysinfo's per-PID map empty (we start from
         // `System::new()`), so the cmdline/exe/user strings for hundreds of
         // processes are never allocated until the user actually asks to see them.
+        // The per-PID scan is the sampler's most expensive operation, so it
+        // runs only when something on screen needs it: the Processes tab
+        // (full table) or the optional graph-attribution feature (top-N only).
         // When hidden we keep the previous list so the tab paints it on reopen.
         let want_procs = processes_active.load(Ordering::Relaxed);
-        if want_procs {
-            sys.refresh_processes_specifics(
-                ProcessesToUpdate::All,
-                true,
-                ProcessRefreshKind::nothing()
-                    .with_cpu()
-                    .with_memory()
-                    .with_disk_usage()
-                    .with_user(sysinfo::UpdateKind::OnlyIfNotSet)
+        let want_attr = attribution_enabled.load(Ordering::Relaxed);
+        let mut attribution = attribution::Attribution::default();
+        if want_procs || want_attr {
+            // Attribution needs only pid/name + CPU/mem/disk; the Processes
+            // table additionally wants the string-heavy cmdline/exe/user. Pull
+            // the wide set only when the table is actually showing.
+            let kind = ProcessRefreshKind::nothing()
+                .with_cpu()
+                .with_memory()
+                .with_disk_usage();
+            let kind = if want_procs {
+                kind.with_user(sysinfo::UpdateKind::OnlyIfNotSet)
                     .with_cmd(sysinfo::UpdateKind::OnlyIfNotSet)
-                    .with_exe(sysinfo::UpdateKind::OnlyIfNotSet),
-            );
-            users.refresh();
-            working.processes = Arc::new(processes::collect(&sys, &users));
+                    .with_exe(sysinfo::UpdateKind::OnlyIfNotSet)
+            } else {
+                kind
+            };
+            sys.refresh_processes_specifics(ProcessesToUpdate::All, true, kind);
+            if want_attr {
+                attribution = attribution::collect(&sys, delta_secs);
+                attribution.gpu = gpu_attr.sample(&sys, gpu_collector.nvml(), delta_secs);
+            }
+            if want_procs {
+                users.refresh();
+                working.processes = Arc::new(processes::collect(&sys, &users));
+            }
         }
 
         nets.refresh(true);
@@ -266,6 +291,14 @@ fn sampler_loop(
             }
         }
 
+        if want_attr {
+            push_capped(&mut working.history.attribution, attribution, HISTORY_LEN);
+        } else if !working.history.attribution.is_empty() {
+            // Feature toggled off — drop accumulated shares so the hover overlay
+            // stops surfacing stale attribution.
+            working.history.attribution.clear();
+        }
+
         working.system = summary;
         working.gpus = gpus;
         working.ready = true;
@@ -297,7 +330,7 @@ fn sampler_loop(
             // ~one slice instead of up to a full refresh interval (1 s default).
             // The process scan itself is only a few ms; the felt latency was
             // purely this sleep. Polling a relaxed atomic every 40 ms is free.
-            if want_procs {
+            if want_procs || want_attr {
                 thread::sleep(remaining);
             } else {
                 let slice = Duration::from_millis(40);

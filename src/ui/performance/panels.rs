@@ -2,9 +2,26 @@ use std::collections::VecDeque;
 
 use crate::monitor::Snapshot;
 use crate::theme;
+use crate::ui::attribution;
 use crate::ui::widgets;
 
 use super::format::{iface_label, short_disk_name};
+
+/// Render the per-process attribution panel for `kind` beneath a graph, but
+/// only when the feature is actually running (its history is populated). When
+/// the setting is off the history is empty and we draw nothing, so the panel
+/// never appears unless the user opted in. `hovered` is the plot-x returned by
+/// the plot widget.
+fn attribution_panel(
+    ui: &mut egui::Ui,
+    snap: &Snapshot,
+    kind: attribution::Kind,
+    hovered: Option<f64>,
+) {
+    if !snap.history.attribution.is_empty() {
+        attribution::show(ui, &snap.history.attribution, kind, hovered);
+    }
+}
 
 pub(super) fn panel_cpu(ui: &mut egui::Ui, snap: &Snapshot) {
     ui.heading(format!("CPU: {}", snap.system.cpu_brand));
@@ -19,7 +36,7 @@ pub(super) fn panel_cpu(ui: &mut egui::Ui, snap: &Snapshot) {
 
     widgets::card(ui, |ui| {
         ui.label("Total usage (last 60s)");
-        widgets::big_plot(
+        let hovered = widgets::big_plot(
             ui,
             "cpu_total_plot",
             &[("cpu", &snap.history.cpu_total, theme::GRAPH_CPU)],
@@ -27,6 +44,7 @@ pub(super) fn panel_cpu(ui: &mut egui::Ui, snap: &Snapshot) {
             180.0,
             snap.sample_interval_ms,
         );
+        attribution_panel(ui, snap, attribution::Kind::Cpu, hovered);
         ui.add_space(8.0);
         ui.vertical_centered(|ui| {
             ui.horizontal(|ui| {
@@ -101,7 +119,7 @@ pub(super) fn panel_memory(ui: &mut egui::Ui, snap: &Snapshot) {
 
     widgets::card(ui, |ui| {
         ui.label("Usage (last 60s)");
-        widgets::big_plot(
+        let hovered = widgets::big_plot(
             ui,
             "ram_plot",
             &[("ram", &snap.history.ram_used_pct, theme::GRAPH_RAM)],
@@ -109,6 +127,7 @@ pub(super) fn panel_memory(ui: &mut egui::Ui, snap: &Snapshot) {
             180.0,
             snap.sample_interval_ms,
         );
+        attribution_panel(ui, snap, attribution::Kind::Ram, hovered);
         ui.add_space(8.0);
         widgets::stat(
             ui,
@@ -162,7 +181,7 @@ pub(super) fn panel_disk(ui: &mut egui::Ui, snap: &Snapshot, idx: usize) {
     widgets::card(ui, |ui| {
         ui.label("Total I/O (read + write, last 60s)");
         let max = widgets::max_in(r_hist.iter().zip(w_hist.iter()).map(|(a, b)| a + b)).max(1.0);
-        widgets::big_plot_f64(
+        let hovered = widgets::big_plot_f64(
             ui,
             &format!("disk_plot_{idx}"),
             &[
@@ -173,6 +192,9 @@ pub(super) fn panel_disk(ui: &mut egui::Ui, snap: &Snapshot, idx: usize) {
             180.0,
             snap.sample_interval_ms,
         );
+        // Disk attribution is aggregate (read + write per process), not split
+        // per device — surfaced under whichever disk panel is open.
+        attribution_panel(ui, snap, attribution::Kind::Disk, hovered);
         ui.add_space(8.0);
         widgets::stat(ui, "Read", &widgets::format_bps(d.read_bps));
         widgets::stat(ui, "Write", &widgets::format_bps(d.write_bps));
@@ -284,7 +306,7 @@ pub(super) fn panel_gpu(ui: &mut egui::Ui, snap: &Snapshot, idx: usize) {
         let empty: VecDeque<f32> = VecDeque::new();
         let util_hist = snap.history.gpu_util.get(idx).unwrap_or(&empty);
         let mem_hist = snap.history.gpu_mem_pct.get(idx).unwrap_or(&empty);
-        widgets::big_plot(
+        let hovered = widgets::big_plot(
             ui,
             "gpu_plot",
             &[
@@ -295,6 +317,9 @@ pub(super) fn panel_gpu(ui: &mut egui::Ui, snap: &Snapshot, idx: usize) {
             180.0,
             snap.sample_interval_ms,
         );
+        // GPU attribution is system-wide (merged across devices), shown under
+        // whichever GPU panel is open.
+        attribution_panel(ui, snap, attribution::Kind::Gpu, hovered);
         ui.add_space(8.0);
         let util_label = if g.util_pct.is_nan() {
             "N/A".to_string()
