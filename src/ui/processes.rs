@@ -127,6 +127,17 @@ impl State {
             properties: None,
         }
     }
+
+    /// Flush the persistent icon cache to disk. Called from `App::on_exit`.
+    pub fn save_icon_cache(&mut self) {
+        self.icons.save_persistent();
+    }
+
+    /// Throttled per-frame flush of the icon cache, so a non-clean shutdown
+    /// (one that skips `on_exit`) loses at most a few seconds of resolved icons.
+    pub fn flush_icon_cache_if_due(&mut self) {
+        self.icons.flush_if_due();
+    }
 }
 
 impl Default for State {
@@ -216,6 +227,10 @@ fn append_section<'a>(
 }
 
 pub fn show(ui: &mut egui::Ui, state: &mut State, snap: &Snapshot) {
+    // Must run before the apps/background partition below, which queries
+    // `has_desktop_entry`.
+    state.icons.pump(ui.ctx());
+
     // Title row + selection actions on the right.
     ui.horizontal(|ui| {
         ui.heading("Processes");

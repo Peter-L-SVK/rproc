@@ -52,6 +52,10 @@ impl eframe::App for App {
 
         let snap = self.sampler.snapshot();
 
+        // Persist newly resolved icons periodically so a non-clean shutdown
+        // (which skips `on_exit`) doesn't discard the session's lookups.
+        self.processes.flush_icon_cache_if_due();
+
         // Below this window width the sidebar collapses to icons-only so the
         // central panel keeps usable room. Threshold matches the point where
         // 220 px of sidebar + ~250 px cards + a viable detail pane stops fitting.
@@ -87,5 +91,11 @@ impl eframe::App for App {
                 Tab::Services => ui::services::show(ui, &mut self.services),
                 Tab::Settings => ui::settings::show(ui, &mut self.settings_state, &self.settings),
             });
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // Persist the resolved process→icon map so the next launch skips the
+        // freedesktop theme scan (see ui::icons::Resolver).
+        self.processes.save_icon_cache();
     }
 }
