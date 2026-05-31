@@ -1008,17 +1008,24 @@ fn render_properties_window(
 }
 
 fn draw_icon(ui: &mut egui::Ui, uri: Option<&str>) {
+    let size = egui::Vec2::splat(16.0);
     if let Some(uri) = uri {
-        ui.add(
-            egui::Image::new(uri)
-                .fit_to_exact_size(egui::Vec2::splat(16.0))
-                .maintain_aspect_ratio(true),
-        );
-    } else {
-        ui.add(egui::Label::new(
-            egui::RichText::new("⚙").color(theme::TEXT_DIM).size(14.0),
-        ));
+        let image = egui::Image::new(uri)
+            .fit_to_exact_size(size)
+            .maintain_aspect_ratio(true)
+            .show_loading_spinner(false);
+        // Probe the decode up front: the extension filter only guarantees a
+        // loadable extension, not a decodable file. Fall back to the gear
+        // glyph on error / missing format support so we don't show a
+        // broken-image glyph in the row.
+        if image.load_for_size(ui.ctx(), size).is_ok() {
+            ui.add(image);
+            return;
+        }
     }
+    ui.add(egui::Label::new(
+        egui::RichText::new("⚙").color(theme::TEXT_DIM).size(14.0),
+    ));
 }
 
 fn status_color(s: &str) -> egui::Color32 {
