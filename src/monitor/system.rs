@@ -184,7 +184,7 @@ fn current_cpu_freq() -> u64 {
         std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq")
         && let Ok(khz) = freq.trim().parse::<u64>()
     {
-            return khz / 1000;
+        return khz / 1000;
     }
     0
 }
