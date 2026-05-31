@@ -78,15 +78,13 @@ pub fn show(ui: &mut egui::Ui, state: &mut State) {
     let mut actions: Vec<(usize, &'static str)> = Vec::new();
     let mut open_properties: Option<(String, ServiceScope)> = None;
 
-    // Replace the egui::Frame::new()... block with this:
     egui::Frame::new()
         .fill(theme::PANEL_BG)
         .corner_radius(egui::CornerRadius::same(8))
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
-            // Constrain the table height so the bottom label stays visible
             egui::ScrollArea::vertical()
-                .max_height(ui.available_height() - 30.0) // leave room for status
+                .max_height(ui.available_height() - 30.0)
                 .show(ui, |ui| {
                     TableBuilder::new(ui)
                         .striped(true)
