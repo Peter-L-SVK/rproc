@@ -213,7 +213,7 @@ impl SystemSummary {
             .first()
             .map(|c| c.brand().to_string())
             .unwrap_or_default();
-	let cpu_freq_mhz = current_cpu_freq();
+        let cpu_freq_mhz = current_cpu_freq();
         let logical_cores = sys.cpus().len();
         let physical_cores = sys.physical_core_count().unwrap_or(logical_cores);
         let cpu_temp_c = cpu_temperature(components);
