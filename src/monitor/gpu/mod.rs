@@ -106,33 +106,27 @@ fn read_file_f32(p: &PathBuf) -> Option<f32> {
 }
 
 fn pci_model(device: &Path) -> Option<String> {
-    // Try the label file first
+    // 1. Try the label file
     if let Ok(label) = fs::read_to_string(device.join("label")) {
         let t = label.trim();
         if !t.is_empty() {
             return Some(t.into());
         }
     }
-    
-    // Try glxinfo for the renderer string (works for AMD/Intel GPUs)
-    if let Ok(output) = std::process::Command::new("glxinfo")
-        .args(["-B"])
-        .output()
-    {
+
+    // 2. Try glxinfo for the active GPU name (works for AMD/Intel GPUs)
+    if let Ok(output) = std::process::Command::new("glxinfo").args(["-B"]).output() {
         let text = String::from_utf8_lossy(&output.stdout);
         for line in text.lines() {
             if let Some(renderer) = line.strip_prefix("OpenGL renderer string: ") {
-                // Strip driver details in parentheses: "AMD Radeon RX 6750 XT (radeonsi, ...)"
-                let name = renderer
-                    .split(" (")
-                    .next()
-                    .unwrap_or(renderer);
+                // Strip driver details in parentheses: "AMD Radeon RX 6750 XT"
+                let name = renderer.split(" (").next().unwrap_or(renderer);
                 return Some(name.trim().to_string());
             }
         }
     }
-    
-    // Fall back to device directory name
+
+    // 3. Fall back to device directory name
     device
         .parent()
         .and_then(|p| p.file_name())
