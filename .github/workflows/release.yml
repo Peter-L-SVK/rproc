@@ -163,12 +163,36 @@ jobs:
       - name: List artifacts
         run: ls -la dist/
 
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Generate notes against the previous semver tag explicitly. GitHub's
+      # auto-detection picks the nearest ancestor tag, which double-counts a
+      # release whose predecessor was tagged off a side branch (not an
+      # ancestor). Computing the previous tag by version keeps the changelog
+      # to the true delta.
+      - name: Generate release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          prev=$(git tag --list 'v*' --sort=-v:refname \
+            | awk -v cur="$tag" 'found{print; exit} $0==cur{found=1}')
+          echo "current=$tag previous=${prev:-<none>}"
+          args=(-f tag_name="$tag")
+          [ -n "$prev" ] && args+=(-f previous_tag_name="$prev")
+          gh api -X POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            "${args[@]}" --jq .body > notes.md
+          cat notes.md
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
           fail_on_unmatched_files: false
-          generate_release_notes: true
+          body_path: notes.md
 
   # Push an updated PKGBUILD to the AUR. Requires the following repo
   # secrets (Settings -> Secrets and variables -> Actions):
