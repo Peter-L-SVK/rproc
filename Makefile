@@ -1,7 +1,7 @@
 VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 APP_ID  := io.github.trystan_sa.rproc
 
-.PHONY: help flatpak flatpak-install deb rpm aur clean release
+.PHONY: help flatpak flatpak-install deb rpm aur appimage appimage-install clean release
 
 help:
 	@echo "rproc packaging targets:"
@@ -10,6 +10,8 @@ help:
 	@echo "  make deb             build a .deb (target/debian/)"
 	@echo "  make rpm             build an .rpm (target/generate-rpm/)"
 	@echo "  make aur             build the AUR rproc-bin package locally with makepkg"
+	@echo "  make appimage        build an .AppImage (rproc-*.AppImage)"
+	@echo "  make appimage-install build + install locally (~/.local/)"
 	@echo "  make release         interactive: bump version, tag, push -> CI publishes release"
 	@echo "  make clean           remove build artefacts"
 
@@ -66,6 +68,39 @@ aur:
 	@command -v makepkg >/dev/null 2>&1 || { \
 		echo "makepkg not found. Install pacman/base-devel (Arch) or pkg from your distro."; exit 1; }
 	cd packaging/aur && makepkg -f --clean
+# --- AppImage ---------------------------------------------------------------
+
+APPIMAGE_TOOL ?= build/appimagetool-x86_64.AppImage
+
+appimage: target/release/rproc
+	@mkdir -p build/appimage/AppDir/usr/bin
+	cp target/release/rproc build/appimage/AppDir/usr/bin/
+	cp packaging/io.github.trystan_sa.rproc.desktop \
+	   build/appimage/AppDir/
+	cp packaging/icons/hicolor/scalable/apps/$(APP_ID).svg \
+	   build/appimage/AppDir/$(APP_ID).svg
+	cp packaging/appimage/AppRun build/appimage/AppDir/AppRun
+	chmod +x build/appimage/AppDir/AppRun
+	@test -f $(APPIMAGE_TOOL) || { \
+		echo "Downloading appimagetool…"; \
+		curl -sSfL -o $(APPIMAGE_TOOL) \
+		  https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage; \
+		chmod +x $(APPIMAGE_TOOL); \
+	}
+	cd build/appimage && ../../$(APPIMAGE_TOOL) AppDir \
+		../../rproc-$(VERSION)-x86_64.AppImage
+	@echo "==> rproc-$(VERSION)-x86_64.AppImage"
+
+# --- Install AppImage locally ----------------------------------------------
+
+appimage-install: appimage
+	@bash scripts/appimage_install.sh \
+		rproc-$(VERSION)-x86_64.AppImage \
+		packaging/$(APP_ID).desktop \
+		packaging/icons/hicolor/scalable/apps/$(APP_ID).svg
+
+target/release/rproc:
+	cargo build --release --locked
 
 # --- Release flow -----------------------------------------------------------
 # Interactive. Prompts for the bump kind, bumps version, commits, tags
@@ -78,7 +113,7 @@ release:
 # --- Housekeeping -----------------------------------------------------------
 
 clean:
-	rm -rf build rproc-*.flatpak \
+	rm -rf build rproc-*.flatpak rproc-*.AppImage \
 	       target/debian target/generate-rpm \
 	       packaging/flatpak/cargo-sources.json \
 	       packaging/aur/src packaging/aur/pkg \

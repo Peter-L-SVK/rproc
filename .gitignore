@@ -21,3 +21,6 @@ Thumbs.db
 # shared skills committed.
 /.claude/*
 !/.claude/skills/
+/build/
+/rproc-*.AppImage
+/rproc-*.flatpak

@@ -81,6 +81,17 @@ flatpak install --user ./rproc-<version>-x86_64.flatpak
 flatpak run io.github.trystan_sa.rproc
 ```
 
+### AppImage (any distribution)
+
+```bash
+chmod +x rproc-<version>-x86_64.AppImage
+./rproc-<version>-x86_64.AppImage
+```
+
+From a source checkout, `make appimage-install` builds the AppImage and
+installs it for the current user (on `$PATH`, with a launcher entry, all
+under `~/.local/`).
+
 ### NixOS / Nix
 
 ```bash
@@ -161,6 +172,8 @@ make rpm               # build an .rpm -> target/generate-rpm/
 make aur               # build rproc-bin from packaging/aur/PKGBUILD (needs makepkg)
 make flatpak           # build a local .flatpak bundle
 make flatpak-install   # build + install the Flatpak for the current user
+make appimage          # build a portable .AppImage -> rproc-<version>-x86_64.AppImage
+make appimage-install  # build + install the AppImage for the current user (~/.local/)
 ```
 
 ## License

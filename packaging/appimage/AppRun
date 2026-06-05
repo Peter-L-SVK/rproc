@@ -1,0 +1,11 @@
+#!/bin/bash
+# AppRun — AppImage entry point
+set -euo pipefail
+
+APPDIR="$(dirname "$(readlink -f "$0")")"
+export APPDIR
+
+export PATH="${APPDIR}/usr/bin:${PATH}"
+export LD_LIBRARY_PATH="${APPDIR}/usr/lib:${LD_LIBRARY_PATH:-}"
+
+exec "${APPDIR}/usr/bin/rproc" "$@"
